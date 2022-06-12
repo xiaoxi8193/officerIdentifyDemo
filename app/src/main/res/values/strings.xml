@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">officerIdentifyDemo</string>
+    <string name="select_picture">select an image</string>
+    <string name="detect">start take</string>
 </resources>
