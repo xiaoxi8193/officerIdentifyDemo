@@ -71,6 +71,8 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String TEMPLATE_JSON_PATH = "officer.json";
 
+    private int mResultCode;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -177,7 +179,7 @@ public class MainActivity extends AppCompatActivity {
 
             VisionImage image = VisionImage.fromBitmap(bitmap[0]);
             TemplateText templateText = new TemplateText();
-            int mResultCode = activity.mTemplateDetector.detectTemplate(image,templateJson, templateText, null);
+            mResultCode = activity.mTemplateDetector.detectTemplate(image,templateJson, templateText, null);
             return templateText;
         }
 
@@ -203,16 +205,20 @@ public class MainActivity extends AppCompatActivity {
                 activity.mTextViewResult.setText("Failed to detect text lines, result is null.");
                 return;
             }
-            List<TemplateData> templateDataList = templateText.getTemplateData();
-            if (templateDataList != null) {
-                mTextViewResult.append("The key value pairs of identification results are as follows:\n");
-                int index = 0;
-                for (TemplateData element : templateDataList) {
-                    mTextViewResult.append("recognition area" + index + "\n");
-                    mTextViewResult.append("Key:" + element.getWordKey() + "\n");
-                    mTextViewResult.append("Value:" + element.getWordValue() + "\n");
-                    mTextViewResult.append("\n");
-                    index++;
+
+            if (mResultCode == HwHiAIResultCode.AIRESULT_SUCCESS) {
+                int errorCode = templateText.getErrorCode();
+                List<TemplateData> templateDataList = templateText.getTemplateData();
+                if (templateDataList != null) {
+                    mTextViewResult.append("The key value pairs of identification results are as follows:\n");
+                    int index = 0;
+                    for (TemplateData element : templateDataList) {
+                        mTextViewResult.append("recognition area" + index + "\n");
+                        mTextViewResult.append("Key:" + element.getWordKey() + "\n");
+                        mTextViewResult.append("Value:" + element.getWordValue() + "\n");
+                        mTextViewResult.append("\n");
+                        index++;
+                    }
                 }
             }
         }
@@ -299,5 +305,13 @@ public class MainActivity extends AppCompatActivity {
                         REQUEST_PERMISSION_CODE);
             }
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (mTemplateDetector != null) {
+            mTemplateDetector.release();
+        }
+        super.onDestroy();
     }
 }
