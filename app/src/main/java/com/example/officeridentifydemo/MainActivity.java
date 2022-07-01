@@ -24,6 +24,7 @@ import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.google.gson.GsonBuilder;
 import com.huawei.hiai.pdk.resultcode.HwHiAIResultCode; // 加载引擎状态类
 import com.huawei.hiai.vision.common.ConnectionCallback; // 加载连接服务的回调函数
 import com.huawei.hiai.vision.common.VisionBase;  // 加载连接服务的静态类
@@ -69,7 +70,11 @@ public class MainActivity extends AppCompatActivity {
 
     private static final int REQUEST_PERMISSION_CODE = 300;
 
-    private static final String TEMPLATE_JSON_PATH = "officer.json";
+    private static int sPrepareReturnCode = -1;
+
+    private long mPrepareTime = 0;
+
+    private static final String TEMPLATE_JSON_PATH = "officer2.json";
 
     private int mResultCode;
 
@@ -81,6 +86,7 @@ public class MainActivity extends AppCompatActivity {
         requestPermissions();
         visionInit();
     }
+
     private void initView() {
         mImageView = findViewById(R.id.imgViewPicture);
         mTextViewResult = findViewById(R.id.result_table);
@@ -103,6 +109,7 @@ public class MainActivity extends AppCompatActivity {
 
     /**
      * 点击事件
+     *
      * @param view 对应的view
      */
     public void onChildClick(View view) {
@@ -138,10 +145,109 @@ public class MainActivity extends AppCompatActivity {
             }
             mImageView.setImageBitmap(mBitmap);
             showDialog();
-            WeakReference<MainActivity> reference = new WeakReference<>(MainActivity.this);
-            new OfficerCardDetectTask(reference).execute(mBitmap);
+            Log.d(TAG, "configure and prepare start");
+            mTemplateDetector = new TemplateDetector(MainActivity.this);
+            VisionCardConfiguration visionCardConfiguration = new VisionCardConfiguration.Builder()
+                    .setAppType(VisionCardConfiguration.APP_NORMAL)
+                    .setProcessMode(VisionCardConfiguration.MODE_IN)
+                    .setCardType(VisionCardConfiguration.TEMPLATE).build();
+            mTemplateDetector.setVisionConfiguration(visionCardConfiguration);
+            long prepareStart = System.currentTimeMillis();
+            sPrepareReturnCode = mTemplateDetector.prepare();
+            long endTime = System.currentTimeMillis();
+            mPrepareTime = (int) (endTime - prepareStart);
+            Log.d(TAG, "configure and prepare end");
+            detect();
+//            WeakReference<MainActivity> reference = new WeakReference<>(MainActivity.this);
+//            new OfficerCardDetectTask(reference).execute(mBitmap);
         }
         super.onActivityResult(requestCode, resultCode, data);
+    }
+
+    private void detect() {
+        Log.d(TAG, "detect template start");
+        if (sPrepareReturnCode != 0) {
+            Log.e(TAG, "prepare fail, error code: " + sPrepareReturnCode);
+            mTextViewResult.setText("");
+            mTextViewResult.append("prepare fail, error code: " + sPrepareReturnCode + "\n");
+            mTextViewResult.append("see detail in: com.huawei.hiai.pdk.resultcode.HwHiAIResultCode\n");
+            return;
+        }
+
+        // read template json
+        JSONObject templateJson = null;
+        try {
+            templateJson = new JSONObject(readJsonFile(TEMPLATE_JSON_PATH));
+        } catch (JSONException err) {
+            Log.d("trans json error", err.toString());
+        }
+        if (templateJson == null) {
+            Log.e(TAG, "templateJson is null");
+            return;
+        }
+
+        long startTime = System.currentTimeMillis();
+        VisionImage image = VisionImage.fromBitmap(mBitmap);
+        TemplateText templateText = new TemplateText();
+        int resultCode = mTemplateDetector.detectTemplate(image, templateJson, templateText, null);
+        long endTime = System.currentTimeMillis();
+        long runTime = (int) (endTime - startTime);
+        if (resultCode != HwHiAIResultCode.AIRESULT_SUCCESS) {
+            Log.e(TAG, "template detect fail");
+            mTextViewResult.setText("");
+            mTextViewResult.append("run fail, error code: " + resultCode + "\n");
+            mTextViewResult.append("see detail in: com.huawei.hiai.pdk.resultcode.HwHiAIResultCode\n");
+        } else {
+            dismissDialog();
+            int errorCode = templateText.getErrorCode();
+            Log.d(TAG, "error code is :" + errorCode);
+            if (mPrepareTime != 0) {
+                mTextViewResult.append("prepare time cost: " + mPrepareTime + "ms\n");
+            }
+            mTextViewResult.append("run time cost: " + runTime + "ms\n");
+            mTextViewResult.append("================================\n");
+            mTextViewResult.append("error code:" + errorCode + "\n");
+            List<TemplateData> templateDataList = templateText.getTemplateData();
+            if (templateDataList != null) {
+                mTextViewResult.append("The key value pairs of identification results are as follows:\n");
+                int index = 0;
+                for (TemplateData element : templateDataList) {
+                    mTextViewResult.append("recognition area" + index + "\n");
+                    mTextViewResult.append("Key:" + element.getWordKey() + "\n");
+                    mTextViewResult.append("Value:" + element.getWordValue() + "\n");
+                    mTextViewResult.append("\n");
+                    index++;
+                }
+            }
+
+            JSONObject json = new JSONObject();
+            try {
+                json.put("resultCode", resultCode);
+                json.put("common_text", new GsonBuilder().disableHtmlEscaping().create().toJson(templateText));
+            } catch (JSONException e) {
+                e.printStackTrace();
+            }
+            Log.d(TAG, "json output: " + json.toString());
+        }
+        mPrepareTime = 0;
+        Log.d(TAG, "detect template end");
+    }
+
+    /**
+     * read json file，return json String
+     */
+    private String readJsonFile(String fileName) {
+        try {
+            InputStream is = getApplicationContext().getAssets().open(fileName);
+            int size = is.available();
+            byte[] buffer = new byte[size];
+            is.read(buffer);
+            is.close();
+            return new String(buffer, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return null;
+        }
     }
 
     /**
@@ -158,12 +264,12 @@ public class MainActivity extends AppCompatActivity {
         protected TemplateText doInBackground(Bitmap... bitmap) {
             final MainActivity activity = reference.get();
 
-            VisionCardConfiguration visionCardConfiguration  = new VisionCardConfiguration.Builder()
+            VisionCardConfiguration visionCardConfiguration = new VisionCardConfiguration.Builder()
                     .setAppType(VisionCardConfiguration.APP_NORMAL)
                     .setProcessMode(VisionCardConfiguration.MODE_IN)
                     .setCardType(VisionCardConfiguration.TEMPLATE).build();
             activity.mTemplateDetector = new TemplateDetector(activity.getApplicationContext());
-            activity.mTemplateDetector.setVisionConfiguration(visionCardConfiguration );
+            activity.mTemplateDetector.setVisionConfiguration(visionCardConfiguration);
             activity.mTemplateDetector.prepare();
 
             // read template json
@@ -179,7 +285,7 @@ public class MainActivity extends AppCompatActivity {
 
             VisionImage image = VisionImage.fromBitmap(bitmap[0]);
             TemplateText templateText = new TemplateText();
-            mResultCode = activity.mTemplateDetector.detectTemplate(image,templateJson, templateText, null);
+            mResultCode = activity.mTemplateDetector.detectTemplate(image, templateJson, templateText, null);
             return templateText;
         }
 
@@ -242,6 +348,7 @@ public class MainActivity extends AppCompatActivity {
 
     /**
      * 生成拍摄照片保存的uri
+     *
      * @param typeName 子路径名
      * @return uri
      */
@@ -251,6 +358,7 @@ public class MainActivity extends AppCompatActivity {
 
     /**
      * 生成拍摄保存的文件
+     *
      * @param typeName 子路径名
      * @return file
      */
@@ -272,6 +380,7 @@ public class MainActivity extends AppCompatActivity {
 
     /**
      * 根据返回的Intent获取图片的路径
+     *
      * @param data Intent
      * @return 图片路径
      */
@@ -300,7 +409,7 @@ public class MainActivity extends AppCompatActivity {
             int permission2 = ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA);
             if (permission1 != PackageManager.PERMISSION_GRANTED || permission2 != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions(this,
-                        new String[] {Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE,
+                        new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE,
                                 Manifest.permission.CAMERA},
                         REQUEST_PERMISSION_CODE);
             }
